@@ -4,6 +4,7 @@ module LinearOperators
 using FastClosures, Printf, LinearAlgebra, SparseArrays
 
 export AbstractLinearOperator, LinearOperator,
+       NotImplementedLinearOperator,
        LinearOperatorException, mul!,
        opEye, opOnes, opZeros, opDiagonal,
        opInverse, opCholesky, opLDL, opHouseholder, opHermitian,
@@ -28,227 +29,48 @@ import LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.mul!
 import Base.conj
 import Base.hcat, Base.vcat, Base.hvcat
 
-abstract type AbstractLinearOperator{T,F1,F2,F3} end
-OperatorOrMatrix = Union{AbstractLinearOperator, AbstractMatrix}
-
-include("adjtrans.jl")
-
-eltype(A :: AbstractLinearOperator{T,F1,F2,F3}) where {T,F1,F2,F3} = T
-isreal(A :: AbstractLinearOperator{T,F1,F2,F3}) where {T,F1,F2,F3} = T <: Real
-
-const FuncOrNothing = Union{Function, Nothing}
-
-include("PreallocatedLinearOperators.jl")
-
 """
-Base type to represent a linear operator.
+Base abstract type to represent a linear operator.
 The usual arithmetic operations may be applied to operators
 to combine or otherwise alter them. They can be combined with
-other operators, with matrices and with scalars. Operators may
+other operators, with matrices and with scalars. Some Operators may
 be transposed and conjugate-transposed using the usual Julia syntax.
 """
-mutable struct LinearOperator{T,F1<:FuncOrNothing,F2<:FuncOrNothing,F3<:FuncOrNothing} <: AbstractLinearOperator{T,F1,F2,F3}
-  nrow   :: Int
-  ncol   :: Int
-  symmetric :: Bool
-  hermitian :: Bool
-  prod   :: F1 # apply the operator to a vector
-  tprod  :: F2 # apply the transpose operator to a vector
-  ctprod :: F3 # apply the transpose conjugate operator to a vector
+abstract type AbstractLinearOperator{T} end
+
+const ALinOp = AbstractLinearOperator
+const OperatorOrMatrix = Union{AbstractLinearOperator, AbstractMatrix}
+
+eltype(A :: AbstractLinearOperator{T}) where {T} = T
+isreal(A :: AbstractLinearOperator{T}) where {T} = T <: Real
+
+mutable struct NotImplementedLinearOperator <: Exception
+  name :: Union{Symbol,Function,String}
 end
+const NILO = NotImplementedLinearOperator
 
-"""
-    m, n = size(op)
+Base.showerror(io::IO, e::NILO) = print(io, e.name, " not implemented for this LinearOperator type")
 
-Return the size of a linear operator as a tuple.
-"""
-size(op :: AbstractLinearOperator) = (op.nrow, op.ncol)
+# Basic definitions and expected API for specific linear operators
+include("api.jl")
++(op :: ALinOp) = op
 
-"""
-    m = size(op, d)
+# Utility functions
+include("utility.jl")
 
-Return the size of a linear operator along dimension `d`.
-"""
-function size(op :: AbstractLinearOperator, d :: Int)
-  if d == 1
-    return op.nrow
-  end
-  if d == 2
-    return op.ncol
-  end
-  throw(LinearOperatorException("Linear operators only have 2 dimensions for now"))
-end
+# Linear operator types
+include("adjtrans.jl")
+include("DescriptiveLinearOperators.jl")
+include("MatricialLinearOperators.jl")
 
-"""
-    m, n = shape(op)
+#include("PreallocatedLinearOperators.jl")
 
-An alias for size.
-"""
-shape(op :: AbstractLinearOperator) = size(op)
-
-"""
-    hermitian(op)
-    ishermitian(op)
-
-Determine whether the operator is Hermitian.
-"""
-hermitian(op :: AbstractLinearOperator) = op.hermitian
-ishermitian(op :: AbstractLinearOperator) = op.hermitian
-
-"""
-    symmetric(op)
-    issymmetric(op)
-
-Determine whether the operator is symmetric.
-"""
-symmetric(op :: AbstractLinearOperator) = op.symmetric
-issymmetric(op :: AbstractLinearOperator) = op.symmetric
-
-
-"""
-    show(io, op)
-
-Display basic information about a linear operator.
-"""
-function show(io :: IO, op :: AbstractLinearOperator)
-  s  = "Linear operator\n"
-  s *= @sprintf("  nrow: %s\n", op.nrow)
-  s *= @sprintf("  ncol: %d\n", op.ncol)
-  s *= @sprintf("  eltype: %s\n", eltype(op))
-  s *= @sprintf("  symmetric: %s\n", op.symmetric)
-  s *= @sprintf("  hermitian: %s\n", op.hermitian)
-  #s *= @sprintf("  prod:   %s\n", string(op.prod))
-  #s *= @sprintf("  tprod:  %s\n", string(op.tprod))
-  #s *= @sprintf("  ctprod: %s", string(op.ctprod))
-  s *= "\n"
-  print(io, s)
-end
-
-# Constructors.
-"""
-    LinearOperator(M; symmetric=false, hermitian=false)
-
-Construct a linear operator from a dense or sparse matrix.
-Use the optional keyword arguments to indicate whether the operator
-is symmetric and/or hermitian.
-"""
-function LinearOperator(M :: AbstractMatrix{T}; symmetric=false, hermitian=false) where T
-  nrow, ncol = size(M)
-  prod = @closure v -> M * v
-  tprod = @closure u -> transpose(M) * u
-  ctprod = @closure w -> adjoint(M) * w
-  F1 = typeof(prod)
-  F2 = typeof(tprod)
-  F3 = typeof(ctprod)
-  LinearOperator{T,F1,F2,F3}(nrow, ncol, symmetric, hermitian, prod, tprod, ctprod)
-end
-
-"""
-    LinearOperator(M)
-
-Constructs a linear operator from a symmetric tridiagonal matrix. If
-its elements are real, it is also Hermitian, otherwise complex
-symmetric.
-"""
-LinearOperator(M :: SymTridiagonal{T}) where T =
-  LinearOperator(M; symmetric=true, hermitian=eltype(M) <: Real)
-
-"""
-    LinearOperator(M)
-
-Constructs a linear operator from a symmetric matrix. If
-its elements are real, it is also Hermitian, otherwise complex
-symmetric.
-"""
-LinearOperator(M :: Symmetric{T}) where T =
-  LinearOperator(M; symmetric=true, hermitian=eltype(M) <: Real)
-
-"""
-    LinearOperator(M)
-
-Constructs a linear operator from a Hermitian matrix. If
-its elements are real, it is also symmetric.
-"""
-LinearOperator(M :: Hermitian{T}) where T =
-  LinearOperator(M; symmetric=eltype(M) <: Real, hermitian=true)
-
-# the only advantage of this constructor is optional args
-# use LinearOperator{Float64} if you mean real instead of complex
-"""
-    LinearOperator(nrow, ncol, symmetric, hermitian, prod,
-                    [tprod=nothing,
-                    ctprod=nothing])
-
-Construct a linear operator from functions.
-"""
-function LinearOperator(nrow :: Int, ncol :: Int,
-                        symmetric :: Bool, hermitian :: Bool,
-                        prod :: F1,
-                        tprod :: F2=nothing,
-                        ctprod :: F3=nothing) where {F1 <: FuncOrNothing,
-                                                     F2 <: FuncOrNothing,
-                                                     F3 <: FuncOrNothing}
-
-  T = hermitian ? (symmetric ? Float64 : ComplexF64) : ComplexF64
-  LinearOperator{T,F1,F2,F3}(nrow, ncol, symmetric, hermitian, prod, tprod, ctprod)
-end
-
-"""
-    LinearOperator(type, nrow, ncol, symmetric, hermitian, prod,
-                    [tprod=nothing,
-                    ctprod=nothing])
-
-Construct a linear operator from functions where the type is specified as the first argument.
-Notice that the linear operator does not enforce the type, so using a wrong type can
-result in errors. For instance,
-```
-A = [im 1.0; 0.0 1.0] # Complex matrix
-op = LinearOperator(Float64, 2, 2, false, false, v->A*v, u->transpose(A)*u, w->A'*w)
-Matrix(op) # InexactError
-```
-The error is caused because `Matrix(op)` tries to create a Float64 matrix with the
-contents of the complex matrix `A`.
-"""
-function LinearOperator(::Type{T}, nrow :: Int, ncol :: Int,
-                        symmetric :: Bool, hermitian :: Bool,
-                        prod :: F1,
-                        tprod :: F2=nothing,
-                        ctprod :: F3=nothing) where {T,
-                                                     F1 <: FuncOrNothing,
-                                                     F2 <: FuncOrNothing,
-                                                     F3 <: FuncOrNothing}
-
-  LinearOperator{T,F1,F2,F3}(nrow, ncol, symmetric, hermitian, prod, tprod, ctprod)
-end
-
-
-
+#=
 # Apply an operator to a vector.
 function *(op :: AbstractLinearOperator, v :: AbstractVector)
   size(v, 1) == size(op, 2) || throw(LinearOperatorException("shape mismatch"))
   op.prod(v)
 end
-
-
-"""
-    A = Matrix(op)
-
-Materialize an operator as a dense array using `op.ncol` products.
-"""
-function Base.Matrix(op :: AbstractLinearOperator)
-  (m, n) = size(op)
-  A = Array{eltype(op)}(undef, m, n)
-  ei = zeros(eltype(op), n)
-  for i = 1 : n
-    ei[i] = 1
-    A[:, i] = op * ei
-    ei[i] = 0
-  end
-  return A
-end
-
-# Unary operations.
-+(op :: AbstractLinearOperator) = op
 
 function -(op :: AbstractLinearOperator{T,F1,F2,F3}) where {T,F1,F2,F3}
   prod = @closure v -> -op.prod(v)
@@ -258,11 +80,6 @@ function -(op :: AbstractLinearOperator{T,F1,F2,F3}) where {T,F1,F2,F3}
   F5 = typeof(tprod)
   F6 = typeof(ctprod)
   LinearOperator{T,F4,F5,F6}(op.nrow, op.ncol, op.symmetric, op.hermitian, prod, tprod, ctprod)
-end
-
-function mul!(y :: AbstractVector, op :: AbstractLinearOperator, x :: AbstractVector)
-  y .= op * x
-  return y
 end
 
 # Binary operations.
@@ -347,96 +164,11 @@ end
 # Operator - scalar.
 -(op :: AbstractLinearOperator, x :: Number) = op + (-x)
 -(x :: Number, op :: AbstractLinearOperator) = x + (-op)
+=#
 
 
-# Utility functions.
 
-"""
-    check_ctranspose(op)
-
-Cheap check that the operator and its conjugate transposed are related.
-"""
-function check_ctranspose(op :: AbstractLinearOperator{T}) where {T <: Union{AbstractFloat,Complex}}
-  (m, n) = size(op)
-  x = rand(n)
-  y = rand(m)
-  yAx = dot(y, op * x)
-  xAty = dot(x, op' * y)
-  ε = eps(real(eltype(op)))
-  return abs(yAx - conj(xAty)) < (abs(yAx) + ε) * ε^(1/3)
-end
-
-function check_ctranspose(op :: AbstractLinearOperator{T}) where T <: Integer
-  (m, n) = size(op)
-  x = convert(Vector{T}, (floor.(10 * rand(n)))) .- 5
-  y = convert(Vector{T}, (floor.(10 * rand(m)))) .- 5
-  yAx = dot(y, op * x)
-  xAty = dot(x, op' * y)
-  return yAx == xAty
-end
-
-check_ctranspose(M :: AbstractMatrix) = check_ctranspose(LinearOperator(M))
-
-"""
-    check_hermitian(op)
-
-Cheap check that the operator is Hermitian.
-"""
-function check_hermitian(op :: AbstractLinearOperator{T}) where {T <: Union{AbstractFloat,Complex}}
-  m, n = size(op)
-  m == n || throw(LinearOperatorException("shape mismatch"))
-  v = rand(n)
-  w = copy(op * v)  # copy necessary to guard against in-place operators
-  s = dot(w, w);  # = (Av)'(Av) = v' A' A v.
-  y = op * w
-  t = dot(v, y);  # = v' A A v.
-  ε = eps(real(eltype(op)))
-  return abs(s - t) < (abs(s) + ε) * ε^(1/3)
-end
-
-function check_hermitian(op :: AbstractLinearOperator{T}) where T <: Integer
-  m, n = size(op)
-  m == n || throw(LinearOperatorException("shape mismatch"))
-  v = convert(Vector{T}, (floor.(10 * rand(n)))) .- 5
-  w = copy(op * v)
-  s = dot(w, w)  # = (Av)'(Av) = v' A' A v.
-  y = op * w
-  t = dot(v, y)  # = v' A A v.
-  return s == t
-end
-
-check_hermitian(M :: AbstractMatrix) = check_hermitian(LinearOperator(M))
-
-"""
-    check_positive_definite(op; semi=false)
-
-Cheap check that the operator is positive (semi-)definite.
-"""
-function check_positive_definite(op :: AbstractLinearOperator{T}; semi=false) where {T <: Union{AbstractFloat,Complex}}
-  m, n = size(op)
-  m == n || throw(LinearOperatorException("shape mismatch"))
-  v = rand(n)
-  w = op * v
-  vw = dot(v, w)
-  ε = eps(real(eltype(op)))
-  if imag(vw) > sqrt(ε) * abs(vw)
-    return false
-  end
-  vw = real(vw)
-  return semi ? (vw ≥ 0) : (vw > 0)
-end
-
-function check_positive_definite(op :: AbstractLinearOperator{T}; semi=false) where T <: Integer
-  m, n = size(op)
-  m == n || throw(LinearOperatorException("shape mismatch"))
-  v = convert(Vector{T}, (floor.(10 * rand(n)))) .- 5
-  w = op * v
-  vw = dot(v, w)
-  return semi ? (vw ≥ 0) : (vw > 0)
-end
-
-check_positive_definite(M :: AbstractMatrix; kwargs...) = check_positive_definite(LinearOperator(M); kwargs...)
-
+#=
 # Special linear operators.
 
 """`opEye()`
@@ -814,5 +546,6 @@ function getindex(op :: AbstractLinearOperator,
   E = opExtension(cols, size(op, 2))
   return R * op * E
 end
+=#
 
 end  # module

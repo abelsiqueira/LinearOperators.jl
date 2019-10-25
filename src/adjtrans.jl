@@ -1,23 +1,41 @@
 export AdjointLinearOperator, TransposeLinearOperator, adjoint, transpose
 
 # From julialang:stdlib/LinearAlgebra/src/adjtrans.jl
-struct AdjointLinearOperator{T,F1,F2,F3} <: AbstractLinearOperator{T,F1,F2,F3}
-  parent :: AbstractLinearOperator{T,F1,F2,F3}
+struct AdjointLinearOperator{T,S} <: ALinOp{T}
+  parent :: S
+  function AdjointLinearOperator{T,S}(op :: S) where {T,S}
+    @assert eltype(op) == T
+    new(op)
+  end
 end
 
-struct TransposeLinearOperator{T,F1,F2,F3} <: AbstractLinearOperator{T,F1,F2,F3}
-  parent :: AbstractLinearOperator{T,F1,F2,F3}
+struct TransposeLinearOperator{T,S} <: ALinOp{T}
+  parent :: ALinOp{T}
+  function TransposeLinearOperator{T,S}(op :: S) where {T,S}
+    @assert eltype(op) == T
+    new(op)
+  end
 end
 
-struct ConjugateLinearOperator{T,F1,F2,F3} <: AbstractLinearOperator{T,F1,F2,F3}
-  parent :: AbstractLinearOperator{T,F1,F2,F3}
+struct ConjugateLinearOperator{T,S} <: ALinOp{T}
+  parent :: ALinOp{T}
+  function ConjugateLinearOperator{T,S}(op :: S) where {T,S}
+    @assert eltype(op) == T
+    T <: Real && return op
+    new(op)
+  end
 end
 
-adjoint(A :: AbstractLinearOperator) = AdjointLinearOperator(A)
+AdjointLinearOperator(A)   = AdjointLinearOperator{eltype(A),typeof(A)}(A)
+TransposeLinearOperator(A) = TransposeLinearOperator{eltype(A),typeof(A)}(A)
+ConjugateLinearOperator(A) = ConjugateLinearOperator{eltype(A),typeof(A)}(A)
+
+adjoint(A :: ALinOp) = AdjointLinearOperator(A)
+transpose(A :: ALinOp) = TransposeLinearOperator(A)
+conj(A :: ALinOp) = ConjugateLinearOperator(A)
+
 adjoint(A :: AdjointLinearOperator) = A.parent
-transpose(A :: AbstractLinearOperator) = TransposeLinearOperator(A)
 transpose(A :: TransposeLinearOperator) = A.parent
-conj(A :: AbstractLinearOperator) = ConjugateLinearOperator(A)
 conj(A :: ConjugateLinearOperator) = A.parent
 
 adjoint(A :: ConjugateLinearOperator) = transpose(A.parent)
@@ -55,37 +73,10 @@ function show(io :: IO, op :: ConjugateLinearOperator)
   show(io, op.parent)
 end
 
-function *(op :: AdjointLinearOperator, v :: AbstractVector)
-  p = op.parent
-  ishermitian(p) && return p * v
-  p.ctprod !== nothing && return p.ctprod(v)
-  tprod = p.tprod
-  if p.tprod === nothing
-    if issymmetric(p)
-      tprod = p.prod
-    else
-      throw(LinearOperatorException("unable to infer conjugate transpose operator"))
-    end
-  end
-  return conj.(tprod(conj.(v)))
-end
+linop_prod(op :: TransposeLinearOperator, v :: AbstractVector) = linop_tprod(op.parent, v)
+linop_prod(op :: AdjointLinearOperator, v :: AbstractVector) = linop_ctprod(op.parent, v)
 
-function *(op :: TransposeLinearOperator, v :: AbstractVector)
-  p = op.parent
-  issymmetric(p) && return p * v
-  p.tprod !== nothing && return p.tprod(v)
-  ctprod = p.ctprod
-  if p.ctprod === nothing
-    if ishermitian(p)
-      ctprod = p.prod
-    else
-      throw(LinearOperatorException("unable to infer transpose operator"))
-    end
-  end
-  return conj.(ctprod(conj.(v)))
-end
-
-function *(op :: ConjugateLinearOperator, v :: AbstractVector)
+function linop_prod(op :: ConjugateLinearOperator, v :: AbstractVector)
   p = op.parent
   return conj.(p * v)
 end

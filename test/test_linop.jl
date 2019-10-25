@@ -5,7 +5,7 @@ function test_linop()
   A1 = simple_matrix(ComplexF64, nrow, ncol)
 
   @testset "Basic operations" begin
-    for op = (LinearOperator(A1), PreallocatedLinearOperator(A1))
+    for op = (LinearOperator(A1)#=, PreallocatedLinearOperator(A1)=#)
       show(op);
 
       @testset "Data type" begin
@@ -56,6 +56,7 @@ function test_linop()
       end
     end
 
+    #=
     @testset "Preallocated LinearOperator(Matrix)" begin
       A2 = simple_matrix(Float64, nrow, ncol)
       for A in (A1, A2)
@@ -99,6 +100,7 @@ function test_linop()
         end
       end
     end
+    =#
 
     @testset "Basic arithmetic operations" begin
       B1 = simple_matrix(ComplexF64, nrow, ncol)
